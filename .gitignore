@@ -1,0 +1,9 @@
+echo ".env
+__pycache__/
+*.pyc
+.DS_Store
+static/stories/
+*.jpg
+*.png
+story_output*
+tmp_*" > .gitignore
