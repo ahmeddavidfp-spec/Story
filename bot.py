@@ -233,25 +233,35 @@ async def action_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_caption("❌ Annulé.")
 
 # ─── MAIN ─────────────────────────────────────────────
+import asyncio
+from hypercorn.config import Config
+from hypercorn.asyncio import serve
+from asgiref.wsgi import WsgiToAsgi
+
 def main():
-    global telegram_app
+    async def run():
+        global telegram_app
 
-    PORT = int(os.environ.get("PORT", 10000))
+        telegram_app = Application.builder().token(BOT_TOKEN).build()
+        telegram_app.add_handler(CommandHandler("start", start))
+        telegram_app.add_handler(CallbackQueryHandler(gallery_chosen, pattern="^gallery:"))
+        telegram_app.add_handler(CallbackQueryHandler(action_chosen,  pattern="^action:"))
 
-    telegram_app = Application.builder().token(BOT_TOKEN).build()
-    telegram_app.add_handler(CommandHandler("start", start))
-    telegram_app.add_handler(CallbackQueryHandler(gallery_chosen, pattern="^gallery:"))
-    telegram_app.add_handler(CallbackQueryHandler(action_chosen,  pattern="^action:"))
-
-    # Enregistre le webhook auprès de Telegram
-    import asyncio
-    async def set_webhook():
+        # Supprime l'ancien webhook/polling puis enregistre le nouveau
+        await telegram_app.bot.delete_webhook(drop_pending_updates=True)
         await telegram_app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
         await telegram_app.initialize()
-    asyncio.run(set_webhook())
+        await telegram_app.start()
 
-    print(f"🤖 Bot démarré en webhook sur {WEBHOOK_URL}/webhook")
-    flask_app.run(host="0.0.0.0", port=PORT)
+        print(f"🤖 Bot démarré en webhook sur {WEBHOOK_URL}/webhook")
+
+        config = Config()
+        config.bind = [f"0.0.0.0:{int(os.environ.get('PORT', 10000))}"]
+
+        asgi_app = WsgiToAsgi(flask_app)
+        await serve(asgi_app, config)
+
+    asyncio.run(run())
 
 if __name__ == "__main__":
     main()
