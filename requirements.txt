@@ -4,3 +4,6 @@ Pillow
 psycopg2-binary
 openai
 flask
+python-dotenv
+opencv-python-headless
+numpy
