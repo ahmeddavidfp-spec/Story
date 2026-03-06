@@ -1,9 +1,8 @@
 import os
-import threading
 import requests
 import psycopg2
 from dotenv import load_dotenv
-from flask import Flask, send_from_directory
+from flask import Flask, send_from_directory, request as flask_request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -16,7 +15,8 @@ CHAT_ID                 = os.getenv("TELEGRAM_CHAT_ID")
 DATABASE_URL            = os.getenv("DATABASE_URL")
 INSTAGRAM_BUSINESS_ID   = os.getenv("INSTAGRAM_BUSINESS_ID")
 IG_ACCESS_TOKEN         = os.getenv("IG_ACCESS_TOKEN")
-BASE_URL                = os.getenv("BASE_URL")  # ex: https://ton-site.onrender.com
+BASE_URL                = os.getenv("BASE_URL")  # ex: https://story-5i1u.onrender.com
+WEBHOOK_URL             = os.getenv("WEBHOOK_URL", BASE_URL)
 
 # ─── Galeries depuis DB ───────────────────────────────
 def get_galleries() -> list:
@@ -71,7 +71,6 @@ def download_image(url: str, dest: str) -> str:
 def publish_story_instagram(story_filename: str) -> tuple[bool, dict]:
     image_url = f"{BASE_URL}/stories/{story_filename}"
 
-    # Étape 1 : Créer le container
     create_url = f"https://graph.facebook.com/v19.0/{INSTAGRAM_BUSINESS_ID}/media"
     r = requests.post(create_url, data={
         "image_url":    image_url,
@@ -86,7 +85,6 @@ def publish_story_instagram(story_filename: str) -> tuple[bool, dict]:
 
     container_id = result["id"]
 
-    # Étape 2 : Publier le container
     publish_url = f"https://graph.facebook.com/v19.0/{INSTAGRAM_BUSINESS_ID}/media_publish"
     r2 = requests.post(publish_url, data={
         "creation_id":  container_id,
@@ -102,6 +100,9 @@ def publish_story_instagram(story_filename: str) -> tuple[bool, dict]:
 # ─── Flask ────────────────────────────────────────────
 flask_app = Flask(__name__)
 
+# Référence globale à l'application Telegram
+telegram_app = None
+
 @flask_app.route("/health")
 def health():
     return "OK", 200
@@ -110,9 +111,15 @@ def health():
 def serve_story(filename):
     return send_from_directory("static/stories", filename)
 
-def run_flask():
-    port = int(os.environ.get("PORT", 10000))
-    flask_app.run(host="0.0.0.0", port=port)
+@flask_app.route("/webhook", methods=["POST"])
+def webhook():
+    import asyncio
+    if telegram_app is None:
+        return "Bot not ready", 503
+    data = flask_request.get_json(force=True)
+    update = Update.de_json(data, telegram_app.bot)
+    asyncio.run(telegram_app.process_update(update))
+    return "OK", 200
 
 # ─── /start ───────────────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -227,19 +234,24 @@ async def action_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ─── MAIN ─────────────────────────────────────────────
 def main():
-    # Lance Flask dans un thread séparé pour ouvrir le port
-    t = threading.Thread(target=run_flask)
-    t.daemon = True
-    t.start()
+    global telegram_app
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    PORT = int(os.environ.get("PORT", 10000))
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(gallery_chosen, pattern="^gallery:"))
-    app.add_handler(CallbackQueryHandler(action_chosen,  pattern="^action:"))
+    telegram_app = Application.builder().token(BOT_TOKEN).build()
+    telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.add_handler(CallbackQueryHandler(gallery_chosen, pattern="^gallery:"))
+    telegram_app.add_handler(CallbackQueryHandler(action_chosen,  pattern="^action:"))
 
-    print("🤖 Bot démarré...")
-    app.run_polling()
+    # Enregistre le webhook auprès de Telegram
+    import asyncio
+    async def set_webhook():
+        await telegram_app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
+        await telegram_app.initialize()
+    asyncio.run(set_webhook())
+
+    print(f"🤖 Bot démarré en webhook sur {WEBHOOK_URL}/webhook")
+    flask_app.run(host="0.0.0.0", port=PORT)
 
 if __name__ == "__main__":
     main()
