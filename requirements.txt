@@ -4,3 +4,4 @@ requests
 hypercorn
 asgiref
 python-dotenv
+psycopg2-binary
