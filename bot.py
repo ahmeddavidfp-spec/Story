@@ -1,7 +1,9 @@
 import os
+import threading
 import requests
 import psycopg2
 from dotenv import load_dotenv
+from flask import Flask, send_from_directory
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -67,7 +69,6 @@ def download_image(url: str, dest: str) -> str:
 
 # ─── Publication Instagram ────────────────────────────
 def publish_story_instagram(story_filename: str) -> tuple[bool, dict]:
-    # L'image doit être accessible publiquement
     image_url = f"{BASE_URL}/stories/{story_filename}"
 
     # Étape 1 : Créer le container
@@ -97,6 +98,21 @@ def publish_story_instagram(story_filename: str) -> tuple[bool, dict]:
     if "id" in result2:
         return True, result2
     return False, result2
+
+# ─── Flask ────────────────────────────────────────────
+flask_app = Flask(__name__)
+
+@flask_app.route("/health")
+def health():
+    return "OK", 200
+
+@flask_app.route("/stories/<filename>")
+def serve_story(filename):
+    return send_from_directory("static/stories", filename)
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    flask_app.run(host="0.0.0.0", port=port)
 
 # ─── /start ───────────────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -139,9 +155,9 @@ async def gallery_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"❌ Plus aucune image disponible pour *{gallery}*.", parse_mode="Markdown")
         return
 
-    raw_path   = f"tmp_raw_{gallery}.jpg"
+    raw_path       = f"tmp_raw_{gallery}.jpg"
     story_filename = f"tmp_story_{gallery}.jpg"
-    story_path = f"static/stories/{story_filename}"
+    story_path     = f"static/stories/{story_filename}"
 
     download_image(photo["image_url"], raw_path)
     os.makedirs("static/stories", exist_ok=True)
@@ -211,6 +227,11 @@ async def action_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ─── MAIN ─────────────────────────────────────────────
 def main():
+    # Lance Flask dans un thread séparé pour ouvrir le port
+    t = threading.Thread(target=run_flask)
+    t.daemon = True
+    t.start()
+
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
