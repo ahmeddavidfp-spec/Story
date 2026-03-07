@@ -10,13 +10,22 @@ from create_story import create_story
 
 load_dotenv()
 
-BOT_TOKEN             = os.getenv("TELEGRAM_TOKEN")
-DATABASE_URL          = os.getenv("DATABASE_URL")
-INSTAGRAM_BUSINESS_ID = os.getenv("INSTAGRAM_BUSINESS_ID")
-IG_ACCESS_TOKEN       = os.getenv("IG_ACCESS_TOKEN")
-BASE_URL              = os.getenv("BASE_URL")
-WEBHOOK_URL           = os.getenv("WEBHOOK_URL", BASE_URL)
-PORT                  = int(os.environ.get("PORT", 10000))
+BOT_TOKEN    = os.getenv("TELEGRAM_TOKEN")
+DATABASE_URL = os.getenv("DATABASE_URL")
+PORT         = int(os.environ.get("PORT", 10000))
+
+def get_base_url():
+    return os.getenv("BASE_URL")
+
+def get_webhook_url():
+    return os.getenv("WEBHOOK_URL", get_base_url())
+
+def get_ig_credentials():
+    return (
+        os.getenv("INSTAGRAM_BUSINESS_ID"),
+        os.getenv("IG_ACCESS_TOKEN"),
+        os.getenv("BASE_URL")
+    )
 
 # ─── DB ───────────────────────────────────────────────
 def get_galleries():
@@ -54,11 +63,13 @@ def download_image(url, dest):
     return dest
 
 def publish_story_instagram(story_filename):
+    INSTAGRAM_BUSINESS_ID, IG_ACCESS_TOKEN, BASE_URL = get_ig_credentials()
+
     print("🔍 IG_ID:", INSTAGRAM_BUSINESS_ID)
     print("🔍 TOKEN:", IG_ACCESS_TOKEN[:20] if IG_ACCESS_TOKEN else "VIDE")
     image_url = f"{BASE_URL}/stories/{story_filename}"
     print("🔍 IMAGE_URL:", image_url)
-    
+
     create_url = f"https://graph.facebook.com/v19.0/{INSTAGRAM_BUSINESS_ID}/media"
     r = requests.post(create_url, data={
         "image_url": image_url, "media_type": "STORIES", "access_token": IG_ACCESS_TOKEN
@@ -78,7 +89,7 @@ def publish_story_instagram(story_filename):
 # ─── Flask ────────────────────────────────────────────
 flask_app    = Flask(__name__)
 telegram_app = None
-_loop        = None  # event loop partagé
+_loop        = None
 
 @flask_app.route("/health")
 def health():
@@ -94,7 +105,6 @@ def webhook():
         return "Bot not ready", 503
     data   = flask_request.get_json(force=True)
     update = Update.de_json(data, telegram_app.bot)
-    # On soumet la coroutine dans l'event loop d'Hypercorn (thread-safe)
     future = asyncio.run_coroutine_threadsafe(
         telegram_app.process_update(update), _loop
     )
@@ -109,7 +119,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     keyboard, row = [], []
     for i, g in enumerate(galleries):
-        row.append(InlineKeyboardButton(f"📁 {g.capitalize()}", callback_data=f"gallery:{g}"))
+        row.append(InlineKeyboardButton(f"📁 {g.replace('-', ' ').title()}", callback_data=f"gallery:{g}"))
         if len(row) == 2:
             keyboard.append(row); row = []
     if row:
@@ -124,7 +134,6 @@ async def gallery_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     gallery = query.data.split(":")[1]
 
-    # ✅ Si le message a une photo → edit_message_caption, sinon edit_message_text
     if query.message.photo:
         await query.edit_message_caption(f"⏳ Génération story *{gallery}*...", parse_mode="Markdown")
     else:
@@ -167,7 +176,6 @@ async def gallery_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
-
 async def action_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -186,7 +194,7 @@ async def action_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
             mark_used(image_id)
             for f in [raw_path, story_path]:
                 if f and os.path.exists(f): os.remove(f)
-            await query.edit_message_caption(f"✅ Story *{gallery}* publiée !", parse_mode="Markdown")
+            await query.edit_message_caption(f"✅ Story *{gallery.replace('-', ' ').title()}* publiée !", parse_mode="Markdown")
         else:
             await query.edit_message_caption(f"❌ Erreur :\n`{result}`", parse_mode="Markdown")
 
@@ -210,12 +218,13 @@ def main():
         telegram_app.add_handler(CallbackQueryHandler(gallery_chosen, pattern="^gallery:"))
         telegram_app.add_handler(CallbackQueryHandler(action_chosen,  pattern="^action:"))
 
+        webhook_url = get_webhook_url()
         await telegram_app.bot.delete_webhook(drop_pending_updates=True)
-        await telegram_app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
+        await telegram_app.bot.set_webhook(url=f"{webhook_url}/webhook")
         await telegram_app.initialize()
         await telegram_app.start()
 
-        print(f"🤖 Bot démarré sur {WEBHOOK_URL}/webhook")
+        print(f"🤖 Bot démarré sur {webhook_url}/webhook")
 
         config = Config()
         config.bind = [f"0.0.0.0:{PORT}"]
