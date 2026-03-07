@@ -54,7 +54,11 @@ def download_image(url, dest):
     return dest
 
 def publish_story_instagram(story_filename):
-    image_url  = f"{BASE_URL}/stories/{story_filename}"
+    print("🔍 IG_ID:", INSTAGRAM_BUSINESS_ID)
+    print("🔍 TOKEN:", IG_ACCESS_TOKEN[:20] if IG_ACCESS_TOKEN else "VIDE")
+    image_url = f"{BASE_URL}/stories/{story_filename}"
+    print("🔍 IMAGE_URL:", image_url)
+    
     create_url = f"https://graph.facebook.com/v19.0/{INSTAGRAM_BUSINESS_ID}/media"
     r = requests.post(create_url, data={
         "image_url": image_url, "media_type": "STORIES", "access_token": IG_ACCESS_TOKEN
