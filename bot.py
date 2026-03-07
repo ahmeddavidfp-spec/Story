@@ -57,13 +57,21 @@ def download_image(url, dest):
 async def publish_story_instagram(story_path: str, context: ContextTypes.DEFAULT_TYPE):
     storage_id = int(STORAGE_CHANNEL_ID)
 
+    # 1. Envoi dans Storage Story (optionnel, tu peux retirer)
     with open(story_path, "rb") as f:
         msg = await context.bot.send_photo(chat_id=storage_id, photo=f)
 
+    # 2. Télécharge depuis Telegram vers le serveur local
     file = await context.bot.get_file(msg.photo[-1].file_id)
-    image_url = file.file_path
-    print(f"🔗 URL Telegram : {image_url}")
+    filename = f"pub_{msg.message_id}.jpg"
+    local_path = f"static/stories/{filename}"
+    await file.download_to_drive(local_path)
 
+    # 3. URL publique via Flask sur Render
+    image_url = f"{BASE_URL}/stories/{filename}"
+    print(f"🔗 URL publique : {image_url}")
+
+    # 4. Envoi à Meta
     r = requests.post(
         f"https://graph.facebook.com/v19.0/{INSTAGRAM_BUSINESS_ID}/media",
         data={"image_url": image_url, "media_type": "STORIES", "access_token": IG_ACCESS_TOKEN}
@@ -73,6 +81,7 @@ async def publish_story_instagram(story_path: str, context: ContextTypes.DEFAULT
 
     if "id" not in result:
         await context.bot.delete_message(chat_id=storage_id, message_id=msg.message_id)
+        if os.path.exists(local_path): os.remove(local_path)
         return False, result
 
     r2 = requests.post(
@@ -82,8 +91,12 @@ async def publish_story_instagram(story_path: str, context: ContextTypes.DEFAULT
     result2 = r2.json()
     print("📲 Publish:", result2)
 
+    # 5. Nettoyage
     await context.bot.delete_message(chat_id=storage_id, message_id=msg.message_id)
+    if os.path.exists(local_path): os.remove(local_path)
+
     return ("id" in result2), result2
+
 
 # ─── Flask ────────────────────────────────────────────
 flask_app    = Flask(__name__)
