@@ -5,3 +5,8 @@ hypercorn
 asgiref
 python-dotenv
 psycopg2-binary
+opencv-python-headless
+numpy
+pillow
+openai
+beautifulsoup4
