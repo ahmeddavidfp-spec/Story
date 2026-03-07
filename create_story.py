@@ -4,6 +4,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from openai import OpenAI
 import textwrap
 import os
+import base64
 
 # ─── CONFIG ───────────────────────────────────────────
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -14,19 +15,60 @@ SITE_BASE = "davidahmed.me"
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# ─── 1. TEXTE IA ──────────────────────────────────────
-def generate_caption(title: str) -> str:
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": f"""
-Tu es un photographe artiste.
-Génère une courte légende poétique et cinématique (max 12 mots)
-pour une photo de la ville : "{title}".
-Réponds uniquement avec la légende, sans guillemets.
-        """}],
-        max_tokens=50
-    )
-    return response.choices[0].message.content.strip()
+# ─── 1. TEXTE IA (GPT Vision) ─────────────────────────
+def generate_caption(image_path: str, city: str) -> str:
+    try:
+        with open(image_path, "rb") as f:
+            img_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Tu es un photographe de rue professionnel.\n"
+                        "Analyse la photo et écris une légende Instagram courte.\n\n"
+                        "Règles :\n"
+                        "- 5 à 10 mots\n"
+                        "- description réaliste de ce que tu vois\n"
+                        "- style photographique sobre\n"
+                        "- pas de poésie exagérée\n"
+                        "- pas de clichés touristiques\n"
+                        "- mentionne la ville si pertinent\n"
+                        "- commence par une majuscule, sans guillemets"
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"Photo prise à {city}. Écris une légende."
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{img_b64}",
+                                "detail": "low"   # ← 3x moins cher, suffisant
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=40
+        )
+        caption = response.choices[0].message.content.strip()
+        # Nettoyer les guillemets si GPT en met quand même
+        caption = caption.strip('"').strip("'")
+        print(f"   → Caption IA : {caption}")
+        return caption
+
+    except Exception as e:
+        # Fallback sobre si OpenAI échoue
+        print(f"   ⚠️ OpenAI erreur : {e}")
+        city_clean = city.replace("-", " ").title()
+        return f"Instant de rue à {city_clean}"
 
 # ─── 2. COULEURS DOMINANTES ───────────────────────────
 def get_dominant_colors(image_path: str):
@@ -56,7 +98,7 @@ def get_text_color(dominant):
 def create_background(image_path: str, dominant, secondary) -> Image.Image:
     img = Image.open(image_path).convert("RGB")
     img = img.resize((STORY_W, STORY_H))
-    bg = img.filter(ImageFilter.GaussianBlur(radius=40))
+    bg  = img.filter(ImageFilter.GaussianBlur(radius=40))
 
     overlay = Image.new("RGBA", (STORY_W, STORY_H), (0, 0, 0, 100))
     bg = bg.convert("RGBA")
@@ -64,27 +106,24 @@ def create_background(image_path: str, dominant, secondary) -> Image.Image:
 
     return bg.convert("RGB")
 
-# ─── 5. PHOTO CENTRÉE (cover) ─────────────────────────
+# ─── 5. PHOTO CENTRÉE ─────────────────────────────────
 def paste_photo(background: Image.Image, image_path: str):
     img = Image.open(image_path).convert("RGBA")
 
     target_w = STORY_W
-    ratio = target_w / img.width
+    ratio    = target_w / img.width
     target_h = int(img.height * ratio)
-    img = img.resize((target_w, target_h), Image.LANCZOS)
+    img      = img.resize((target_w, target_h), Image.LANCZOS)
 
     max_photo_h = int(STORY_H * 0.72)
     if target_h > max_photo_h:
         top_crop = (target_h - max_photo_h) // 2
         img = img.crop((0, top_crop, target_w, top_crop + max_photo_h))
 
-    x = 0
-    y = 0
-
     background = background.convert("RGBA")
-    background.paste(img, (x, y), img)
+    background.paste(img, (0, 0), img)
 
-    photo_bottom = y + img.height
+    photo_bottom = img.height
     return background.convert("RGB"), photo_bottom
 
 # ─── 6. TEXTE AVEC BLOC SEMI-TRANSPARENT ─────────────
@@ -98,19 +137,17 @@ def add_text(image: Image.Image, gallery: str, caption: str,
     margin  = 50
     padding = 35
 
-    # Titre = nom de la galerie
-    title = gallery.upper()
-
-    # URL avec galerie
+    # ✅ Titre propre : "New York" au lieu de "NEW-YORK"
+    title    = gallery.replace("-", " ").title()
     site_url = f"{SITE_BASE}/{gallery.lower()}"
 
-    # Calcul hauteur du bloc
     caption_lines = textwrap.wrap(caption, width=28)
+
     bloc_h = (
         padding
-        + 65              # titre
-        + 15              # ligne déco
-        + len(caption_lines) * 55  # caption
+        + 65                           # titre
+        + 20                           # ligne déco
+        + len(caption_lines) * 55      # caption
         + padding
     )
 
@@ -118,8 +155,8 @@ def add_text(image: Image.Image, gallery: str, caption: str,
     bloc_x = margin
     bloc_w = STORY_W - (margin * 2)
 
-    # ✅ Bloc noir semi-transparent arrondi
-    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    # Bloc semi-transparent arrondi
+    overlay      = Image.new("RGBA", image.size, (0, 0, 0, 0))
     overlay_draw = ImageDraw.Draw(overlay)
     overlay_draw.rounded_rectangle(
         [bloc_x, bloc_y, bloc_x + bloc_w, bloc_y + bloc_h],
@@ -127,13 +164,12 @@ def add_text(image: Image.Image, gallery: str, caption: str,
         fill=(0, 0, 0, 170)
     )
     image = Image.alpha_composite(image.convert("RGBA"), overlay)
-    draw = ImageDraw.Draw(image)
+    draw  = ImageDraw.Draw(image)
 
     txt_color = (255, 255, 255)
-
     y = bloc_y + padding
 
-    # Titre (nom galerie)
+    # Titre
     draw.text((bloc_x + padding, y), title, font=font_title, fill=txt_color)
     y += 65
 
@@ -149,7 +185,7 @@ def add_text(image: Image.Image, gallery: str, caption: str,
         draw.text((bloc_x + padding, y), line, font=font_caption, fill=txt_color)
         y += 55
 
-    # ✅ URL avec galerie centré en bas de la story
+    # URL centrée en bas
     url_w = draw.textlength(site_url, font=font_url)
     draw.text(
         ((STORY_W - url_w) // 2, STORY_H - 70),
@@ -161,13 +197,15 @@ def add_text(image: Image.Image, gallery: str, caption: str,
     return image.convert("RGB")
 
 # ─── 7. MAIN ──────────────────────────────────────────
-def create_story(image_path: str, gallery: str, output_path: str = "story_output.jpg") -> str:
+def create_story(image_path: str, gallery: str,
+                 output_path: str = "story_output.jpg") -> str:
+
     print("🎨 Analyse des couleurs...")
     dominant, secondary = get_dominant_colors(image_path)
 
-    print("🤖 Génération du texte IA...")
-    caption = generate_caption(gallery)
-    print(f"   → {caption}")
+    print("🤖 Génération du texte IA (analyse photo)...")
+    # ✅ On passe image_path ET gallery
+    caption = generate_caption(image_path, gallery.replace("-", " ").title())
 
     print("🖼️  Création du fond...")
     background = create_background(image_path, dominant, secondary)
@@ -186,6 +224,6 @@ def create_story(image_path: str, gallery: str, output_path: str = "story_output
 if __name__ == "__main__":
     create_story(
         image_path="test.jpg",
-        gallery="berlin",        # ← nom de la galerie
+        gallery="new-york",
         output_path="story_output.jpg"
     )
