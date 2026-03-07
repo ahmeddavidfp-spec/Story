@@ -119,11 +119,19 @@ async def gallery_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     gallery = query.data.split(":")[1]
-    await query.edit_message_text(f"⏳ Génération story *{gallery}*...", parse_mode="Markdown")
+
+    # ✅ Si le message a une photo → edit_message_caption, sinon edit_message_text
+    if query.message.photo:
+        await query.edit_message_caption(f"⏳ Génération story *{gallery}*...", parse_mode="Markdown")
+    else:
+        await query.edit_message_text(f"⏳ Génération story *{gallery}*...", parse_mode="Markdown")
 
     photo = get_photo_from_gallery(gallery)
     if not photo:
-        await query.edit_message_text(f"❌ Plus d'images pour *{gallery}*.", parse_mode="Markdown")
+        if query.message.photo:
+            await query.edit_message_caption(f"❌ Plus d'images pour *{gallery}*.", parse_mode="Markdown")
+        else:
+            await query.edit_message_text(f"❌ Plus d'images pour *{gallery}*.", parse_mode="Markdown")
         return
 
     raw_path       = f"tmp_raw_{gallery}.jpg"
@@ -146,13 +154,15 @@ async def gallery_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ],
         [InlineKeyboardButton("❌ Annuler", callback_data="action:cancel")]
     ]
+
     with open(story_path, "rb") as f:
         await query.message.reply_photo(
             photo=f,
-            caption=f"📸 *{gallery.capitalize()}*\n🔗 `davidahmed.me/{gallery}`",
+            caption=f"📸 *{gallery.replace('-', ' ').title()}*\n🔗 `davidahmed.me/{gallery}`",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
+
 
 async def action_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
